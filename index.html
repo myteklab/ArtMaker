@@ -346,10 +346,15 @@ canvas {
     var ctx = canvas.getContext('2d');
     var canvasSize = 0;
 
-    // Offscreen buffer: completed strokes rendered here once
+    // Offscreen buffer for completed strokes (rendered once)
     var bufferCanvas = document.createElement('canvas');
     var bufferCtx = bufferCanvas.getContext('2d');
     var bufferDirty = true;
+
+    // Live canvas for the active stroke (incremental drawing)
+    var liveCanvas = document.createElement('canvas');
+    var liveCtx = liveCanvas.getContext('2d');
+    var liveSegmentsDrawn = 0;
 
     var state = {
         symmetry: 8,
@@ -379,7 +384,6 @@ canvas {
         size = Math.max(size, 200);
         canvasSize = size;
 
-        // Use higher resolution for sharp lines
         var dpr = window.devicePixelRatio || 1;
         canvas.width = size * dpr;
         canvas.height = size * dpr;
@@ -391,8 +395,12 @@ canvas {
         bufferCanvas.height = size * dpr;
         bufferCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+        liveCanvas.width = size * dpr;
+        liveCanvas.height = size * dpr;
+        liveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
         bufferDirty = true;
-        redraw();
+        fullRedraw();
     }
 
     // ── Drawing engine ──────────────────────────────
@@ -400,11 +408,9 @@ canvas {
         var size = canvasSize;
         bufferCtx.clearRect(0, 0, size, size);
 
-        // Background
         bufferCtx.fillStyle = state.bgColor;
         bufferCtx.fillRect(0, 0, size, size);
 
-        // Draw all completed strokes to buffer
         for (var i = 0; i < strokes.length; i++) {
             drawStrokeOn(bufferCtx, strokes[i], size);
         }
@@ -412,24 +418,51 @@ canvas {
         bufferDirty = false;
     }
 
-    function redraw() {
+    // Full redraw: rebuild everything from scratch
+    function fullRedraw() {
         var size = canvasSize;
         if (bufferDirty) {
             rebuildBuffer();
         }
 
-        // Composite buffer onto main canvas
-        ctx.clearRect(0, 0, size, size);
-        ctx.drawImage(bufferCanvas, 0, 0, size, size);
+        // Clear live canvas
+        liveCtx.clearRect(0, 0, size, size);
+        liveSegmentsDrawn = 0;
 
-        // Guide lines on top
-        if (state.guides) {
-            drawGuides(size);
+        // If there's an active stroke, draw it fully onto live canvas
+        if (currentStroke && currentStroke.points.length > 1) {
+            drawStrokeOn(liveCtx, currentStroke, size);
+            liveSegmentsDrawn = currentStroke.points.length - 1;
         }
 
-        // Draw current in-progress stroke on main canvas only
-        if (currentStroke && currentStroke.points.length > 1) {
-            drawStrokeOn(ctx, currentStroke, size);
+        composite();
+    }
+
+    // Incremental draw: only add new segments to the live canvas
+    function incrementalDraw() {
+        if (!currentStroke || currentStroke.points.length < 2) return;
+
+        var size = canvasSize;
+        var totalSegments = currentStroke.points.length - 1;
+
+        // Draw only the segments we haven't drawn yet
+        for (var seg = liveSegmentsDrawn; seg < totalSegments; seg++) {
+            drawSegmentOn(liveCtx, currentStroke, seg, size);
+        }
+        liveSegmentsDrawn = totalSegments;
+
+        composite();
+    }
+
+    // Composite: buffer + live + guides onto visible canvas
+    function composite() {
+        var size = canvasSize;
+        ctx.clearRect(0, 0, size, size);
+        ctx.drawImage(bufferCanvas, 0, 0, size, size);
+        ctx.drawImage(liveCanvas, 0, 0, size, size);
+
+        if (state.guides) {
+            drawGuides(size);
         }
     }
 
@@ -458,14 +491,15 @@ canvas {
         ctx.restore();
     }
 
-    function drawStrokeOn(target, stroke, size) {
-        if (stroke.points.length < 2) return;
-
+    // Draw a single segment (prev->curr) across all symmetry copies
+    function drawSegmentOn(target, stroke, segIndex, size) {
         var cx = size / 2;
         var cy = size / 2;
         var n = state.symmetry;
         var angleStep = (Math.PI * 2) / n;
         var copies = stroke.mirror ? n * 2 : n;
+        var prev = stroke.points[segIndex];
+        var curr = stroke.points[segIndex + 1];
 
         for (var c = 0; c < copies; c++) {
             var isMirrored = stroke.mirror && c >= n;
@@ -490,37 +524,28 @@ canvas {
                 target.shadowBlur = 0;
             }
 
-            target.beginPath();
-            var p0 = stroke.points[0];
-            target.moveTo(p0.x * size, p0.y * size);
-
-            for (var j = 1; j < stroke.points.length; j++) {
-                var prev = stroke.points[j - 1];
-                var curr = stroke.points[j];
-
-                if (stroke.rainbow) {
-                    target.strokeStyle = rainbowColor(curr.x, curr.y, rotAngle, isMirrored);
-                    if (stroke.glow) {
-                        target.shadowColor = target.strokeStyle;
-                    }
-                    target.beginPath();
-                    target.moveTo(prev.x * size, prev.y * size);
-                    target.lineTo(curr.x * size, curr.y * size);
-                    target.stroke();
-                } else {
-                    target.lineTo(curr.x * size, curr.y * size);
-                }
-            }
-
-            if (!stroke.rainbow) {
+            if (stroke.rainbow) {
+                target.strokeStyle = rainbowColor(curr.x, curr.y, rotAngle, isMirrored);
+                if (stroke.glow) target.shadowColor = target.strokeStyle;
+            } else {
                 target.strokeStyle = stroke.color;
-                if (stroke.glow) {
-                    target.shadowColor = stroke.color;
-                }
-                target.stroke();
+                if (stroke.glow) target.shadowColor = stroke.color;
             }
+
+            target.beginPath();
+            target.moveTo(prev.x * size, prev.y * size);
+            target.lineTo(curr.x * size, curr.y * size);
+            target.stroke();
 
             target.restore();
+        }
+    }
+
+    // Draw an entire stroke (used for buffer rebuilds)
+    function drawStrokeOn(target, stroke, size) {
+        if (stroke.points.length < 2) return;
+        for (var seg = 0; seg < stroke.points.length - 1; seg++) {
+            drawSegmentOn(target, stroke, seg, size);
         }
     }
 
@@ -577,12 +602,12 @@ canvas {
 
         currentStroke.points.push(pos);
 
-        // Throttle redraws to animation frames
+        // Throttle to animation frames, only draw new segments
         if (!drawFramePending) {
             drawFramePending = true;
             requestAnimationFrame(function() {
                 drawFramePending = false;
-                redraw();
+                incrementalDraw();
             });
         }
     }
@@ -596,7 +621,7 @@ canvas {
         }
         currentStroke = null;
         bufferDirty = true;
-        redraw();
+        fullRedraw();
     }
 
     // Mouse events
@@ -618,7 +643,7 @@ canvas {
         state.symmetry = parseInt(this.value);
         symmetryValue.textContent = state.symmetry;
         bufferDirty = true;
-        redraw();
+        fullRedraw();
     });
 
     // ── UI: Width slider ────────────────────────────
@@ -675,7 +700,7 @@ canvas {
         btn.addEventListener('click', function() {
             state[key] = !state[key];
             btn.classList.toggle('active', state[key]);
-            redraw();
+            composite();
         });
     }
     setupToggle('mirrorBtn', 'mirror');
@@ -701,7 +726,7 @@ canvas {
                 state.bgColor = this.dataset.color;
                 updateBgActive();
                 bufferDirty = true;
-                redraw();
+                fullRedraw();
             });
             bgRow.appendChild(opt);
         }
@@ -716,7 +741,7 @@ canvas {
             state.bgColor = this.value;
             updateBgActive();
             bufferDirty = true;
-            redraw();
+            fullRedraw();
         });
         custom.appendChild(picker);
         bgRow.appendChild(custom);
@@ -736,7 +761,7 @@ canvas {
         if (strokes.length > 0) {
             strokes.pop();
             bufferDirty = true;
-            redraw();
+            fullRedraw();
         }
     });
 
@@ -745,7 +770,7 @@ canvas {
         if (strokes.length === 0) return;
         strokes = [];
         bufferDirty = true;
-        redraw();
+        fullRedraw();
     });
 
     // ── Keyboard shortcuts ──────────────────────────
@@ -755,7 +780,7 @@ canvas {
             if (strokes.length > 0) {
                 strokes.pop();
                 bufferDirty = true;
-                redraw();
+                fullRedraw();
             }
         }
     });
@@ -833,7 +858,7 @@ canvas {
         buildBgRow();
 
         bufferDirty = true;
-        redraw();
+        fullRedraw();
     };
 
 })();
