@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Art Maker</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --panel-border: #0f3460;
+    --text: #e0e0e0;
+    --text-dim: #8888aa;
+    --accent: #e94560;
+    --accent-hover: #ff6b81;
+    --btn: #0f3460;
+    --btn-hover: #1a4a7a;
+    --canvas-bg: #0a0a1a;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* ── Toolbar ─────────────────────────────────────── */
+.toolbar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--panel);
+    border-right: 2px solid var(--panel-border);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-border) transparent;
+}
+
+.toolbar h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+    letter-spacing: 1px;
+}
+
+.tool-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tool-section label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+}
+
+.tool-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tool-row .value-display {
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 28px;
+    text-align: center;
+    color: var(--accent);
+}
+
+/* Slider */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--btn);
+    outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: none;
+}
+
+/* Color palette */
+.color-palette {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.1s, border-color 0.15s;
+}
+.color-swatch:hover { transform: scale(1.15); }
+.color-swatch.active { border-color: #fff; transform: scale(1.15); }
+
+.color-swatch.custom-color {
+    background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);
+    position: relative;
+    overflow: hidden;
+}
+.color-swatch.custom-color input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+}
+
+/* Toggle buttons */
+.toggle-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.toggle-btn {
+    flex: 1;
+    min-width: 70px;
+    padding: 7px 6px;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    background: var(--btn);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, border-color 0.15s;
+}
+.toggle-btn:hover { background: var(--btn-hover); }
+.toggle-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* Action buttons */
+.action-row {
+    display: flex;
+    gap: 6px;
+}
+
+.action-btn {
+    flex: 1;
+    padding: 9px 8px;
+    border: none;
+    border-radius: 6px;
+    background: var(--btn);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.action-btn:hover { background: var(--btn-hover); }
+.action-btn.danger { background: #5a1a2a; }
+.action-btn.danger:hover { background: #7a2a3a; }
+
+/* Background selector */
+.bg-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.bg-option {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.bg-option:hover { border-color: var(--text-dim); }
+.bg-option.active { border-color: #fff; }
+.bg-option.custom-bg {
+    background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);
+    position: relative;
+    overflow: hidden;
+}
+.bg-option.custom-bg input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+}
+
+/* ── Canvas Area ─────────────────────────────────── */
+.canvas-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    position: relative;
+    overflow: hidden;
+}
+
+canvas {
+    border-radius: 8px;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+/* ── Mobile ──────────────────────────────────────── */
+@media (max-width: 700px) {
+    body { flex-direction: column; }
+    .toolbar {
+        width: 100%;
+        min-width: unset;
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding: 8px 10px;
+        gap: 8px;
+        border-right: none;
+        border-bottom: 2px solid var(--panel-border);
+        overflow-y: visible;
+        overflow-x: auto;
+        max-height: 160px;
+    }
+    .toolbar h1 { display: none; }
+    .tool-section { min-width: 120px; }
+    .canvas-area { min-height: 0; }
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+    <h1>Art Maker</h1>
+
+    <!-- Symmetry -->
+    <div class="tool-section">
+        <label>Symmetry Folds</label>
+        <div class="tool-row">
+            <input type="range" id="symmetrySlider" min="2" max="16" value="8">
+            <span class="value-display" id="symmetryValue">8</span>
+        </div>
+    </div>
+
+    <!-- Line Width -->
+    <div class="tool-section">
+        <label>Line Width</label>
+        <div class="tool-row">
+            <input type="range" id="widthSlider" min="1" max="20" value="3">
+            <span class="value-display" id="widthValue">3</span>
+        </div>
+    </div>
+
+    <!-- Colors -->
+    <div class="tool-section">
+        <label>Color</label>
+        <div class="color-palette" id="colorPalette"></div>
+    </div>
+
+    <!-- Toggles -->
+    <div class="tool-section">
+        <label>Effects</label>
+        <div class="toggle-row">
+            <button class="toggle-btn" id="mirrorBtn">Mirror</button>
+            <button class="toggle-btn" id="rainbowBtn">Rainbow</button>
+        </div>
+        <div class="toggle-row">
+            <button class="toggle-btn" id="glowBtn">Glow</button>
+            <button class="toggle-btn" id="guidesBtn">Guides</button>
+        </div>
+    </div>
+
+    <!-- Background -->
+    <div class="tool-section">
+        <label>Background</label>
+        <div class="bg-row" id="bgRow"></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="tool-section">
+        <label>Actions</label>
+        <div class="action-row">
+            <button class="action-btn" id="undoBtn">Undo</button>
+            <button class="action-btn danger" id="clearBtn">Clear</button>
+        </div>
+    </div>
+</div>
+
+<div class="canvas-area">
+    <canvas id="artCanvas"></canvas>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // ── Config ──────────────────────────────────────
+    var PRESET_COLORS = [
+        '#e94560', '#ff6b35', '#ffc857', '#2ec4b6',
+        '#44cf6c', '#3a86ff', '#8338ec', '#ff006e',
+        '#ffffff', '#888888'
+    ];
+
+    var BG_PRESETS = [
+        { color: '#0a0a1a', label: 'Dark' },
+        { color: '#1a1a2e', label: 'Navy' },
+        { color: '#ffffff', label: 'White' }
+    ];
+
+    // ── State ───────────────────────────────────────
+    var canvas = document.getElementById('artCanvas');
+    var ctx = canvas.getContext('2d');
+    var canvasSize = 0;
+
+    var state = {
+        symmetry: 8,
+        mirror: false,
+        rainbow: false,
+        glow: false,
+        guides: false,
+        lineWidth: 3,
+        color: PRESET_COLORS[0],
+        bgColor: BG_PRESETS[0].color,
+        customBg: '#333333'
+    };
+
+    // Strokes: each stroke is { points: [{x,y},...], color, lineWidth, rainbow, glow }
+    // Coordinates stored as fractions (0..1) of canvas size for resolution independence
+    var strokes = [];
+    var currentStroke = null;
+    var isDrawing = false;
+
+    // ── Canvas sizing ───────────────────────────────
+    function resizeCanvas() {
+        var area = document.querySelector('.canvas-area');
+        var w = area.clientWidth;
+        var h = area.clientHeight;
+        var size = Math.min(w, h) - 32;
+        size = Math.max(size, 200);
+        canvasSize = size;
+
+        // Use higher resolution for sharp lines
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = size * dpr;
+        canvas.height = size * dpr;
+        canvas.style.width = size + 'px';
+        canvas.style.height = size + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        redraw();
+    }
+
+    // ── Drawing engine ──────────────────────────────
+    function redraw() {
+        var size = canvasSize;
+        ctx.clearRect(0, 0, size, size);
+
+        // Background
+        ctx.fillStyle = state.bgColor;
+        ctx.fillRect(0, 0, size, size);
+
+        // Guide lines
+        if (state.guides) {
+            drawGuides(size);
+        }
+
+        // Draw all strokes
+        for (var i = 0; i < strokes.length; i++) {
+            drawStroke(strokes[i], size);
+        }
+
+        // Draw current in-progress stroke
+        if (currentStroke && currentStroke.points.length > 1) {
+            drawStroke(currentStroke, size);
+        }
+    }
+
+    function drawGuides(size) {
+        var cx = size / 2;
+        var cy = size / 2;
+        var n = state.symmetry;
+        var angleStep = (Math.PI * 2) / n;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 8]);
+
+        for (var i = 0; i < n; i++) {
+            var angle = angleStep * i;
+            var ex = cx + Math.cos(angle) * size;
+            var ey = cy + Math.sin(angle) * size;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+        }
+
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+
+    function drawStroke(stroke, size) {
+        if (stroke.points.length < 2) return;
+
+        var cx = size / 2;
+        var cy = size / 2;
+        var n = state.symmetry;
+        var angleStep = (Math.PI * 2) / n;
+        var copies = stroke.mirror ? n * 2 : n;
+
+        for (var c = 0; c < copies; c++) {
+            var isMirrored = stroke.mirror && c >= n;
+            var rotIndex = isMirrored ? c - n : c;
+            var rotAngle = angleStep * rotIndex;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(rotAngle);
+            if (isMirrored) {
+                ctx.scale(1, -1);
+            }
+            ctx.translate(-cx, -cy);
+
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = stroke.lineWidth;
+
+            if (stroke.glow) {
+                ctx.shadowBlur = stroke.lineWidth * 3;
+            } else {
+                ctx.shadowBlur = 0;
+            }
+
+            ctx.beginPath();
+            var p0 = stroke.points[0];
+            ctx.moveTo(p0.x * size, p0.y * size);
+
+            for (var j = 1; j < stroke.points.length; j++) {
+                var prev = stroke.points[j - 1];
+                var curr = stroke.points[j];
+
+                if (stroke.rainbow) {
+                    // For rainbow mode, draw segment by segment with varying color
+                    ctx.strokeStyle = rainbowColor(curr.x, curr.y, rotAngle, isMirrored);
+                    if (stroke.glow) {
+                        ctx.shadowColor = ctx.strokeStyle;
+                    }
+                    ctx.beginPath();
+                    ctx.moveTo(prev.x * size, prev.y * size);
+                    ctx.lineTo(curr.x * size, curr.y * size);
+                    ctx.stroke();
+                } else {
+                    ctx.lineTo(curr.x * size, curr.y * size);
+                }
+            }
+
+            if (!stroke.rainbow) {
+                ctx.strokeStyle = stroke.color;
+                if (stroke.glow) {
+                    ctx.shadowColor = stroke.color;
+                }
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    function rainbowColor(x, y, rotAngle, isMirrored) {
+        var dx = x - 0.5;
+        var dy = y - 0.5;
+        var angle = Math.atan2(dy, dx) + rotAngle;
+        if (isMirrored) angle = -angle + rotAngle * 2;
+        var hue = ((angle / (Math.PI * 2)) * 360 + 360) % 360;
+        return 'hsl(' + hue + ', 90%, 60%)';
+    }
+
+    // ── Input handling ──────────────────────────────
+    function getPos(e) {
+        var rect = canvas.getBoundingClientRect();
+        var clientX, clientY;
+        if (e.touches && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        return {
+            x: (clientX - rect.left) / canvasSize,
+            y: (clientY - rect.top) / canvasSize
+        };
+    }
+
+    function startDraw(e) {
+        e.preventDefault();
+        isDrawing = true;
+        var pos = getPos(e);
+        currentStroke = {
+            points: [pos],
+            color: state.color,
+            lineWidth: state.lineWidth,
+            rainbow: state.rainbow,
+            glow: state.glow,
+            mirror: state.mirror
+        };
+    }
+
+    function moveDraw(e) {
+        if (!isDrawing || !currentStroke) return;
+        e.preventDefault();
+        var pos = getPos(e);
+
+        // Point thinning: skip if <2px movement
+        var last = currentStroke.points[currentStroke.points.length - 1];
+        var dx = (pos.x - last.x) * canvasSize;
+        var dy = (pos.y - last.y) * canvasSize;
+        if (dx * dx + dy * dy < 4) return;
+
+        currentStroke.points.push(pos);
+        redraw();
+    }
+
+    function endDraw(e) {
+        if (!isDrawing) return;
+        e.preventDefault();
+        isDrawing = false;
+        if (currentStroke && currentStroke.points.length > 1) {
+            strokes.push(currentStroke);
+        }
+        currentStroke = null;
+        redraw();
+    }
+
+    // Mouse events
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mousemove', moveDraw);
+    canvas.addEventListener('mouseup', endDraw);
+    canvas.addEventListener('mouseleave', endDraw);
+
+    // Touch events
+    canvas.addEventListener('touchstart', startDraw, { passive: false });
+    canvas.addEventListener('touchmove', moveDraw, { passive: false });
+    canvas.addEventListener('touchend', endDraw, { passive: false });
+    canvas.addEventListener('touchcancel', endDraw, { passive: false });
+
+    // ── UI: Symmetry slider ─────────────────────────
+    var symmetrySlider = document.getElementById('symmetrySlider');
+    var symmetryValue = document.getElementById('symmetryValue');
+    symmetrySlider.addEventListener('input', function() {
+        state.symmetry = parseInt(this.value);
+        symmetryValue.textContent = state.symmetry;
+        redraw();
+    });
+
+    // ── UI: Width slider ────────────────────────────
+    var widthSlider = document.getElementById('widthSlider');
+    var widthValue = document.getElementById('widthValue');
+    widthSlider.addEventListener('input', function() {
+        state.lineWidth = parseInt(this.value);
+        widthValue.textContent = state.lineWidth;
+    });
+
+    // ── UI: Color palette ───────────────────────────
+    var paletteEl = document.getElementById('colorPalette');
+
+    function buildPalette() {
+        paletteEl.innerHTML = '';
+        for (var i = 0; i < PRESET_COLORS.length; i++) {
+            var swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.background = PRESET_COLORS[i];
+            swatch.dataset.color = PRESET_COLORS[i];
+            if (PRESET_COLORS[i] === state.color) swatch.classList.add('active');
+            swatch.addEventListener('click', function() {
+                state.color = this.dataset.color;
+                updatePaletteActive();
+            });
+            paletteEl.appendChild(swatch);
+        }
+        // Custom color picker
+        var custom = document.createElement('div');
+        custom.className = 'color-swatch custom-color';
+        var picker = document.createElement('input');
+        picker.type = 'color';
+        picker.value = state.color;
+        picker.addEventListener('input', function() {
+            state.color = this.value;
+            updatePaletteActive();
+        });
+        custom.appendChild(picker);
+        paletteEl.appendChild(custom);
+    }
+
+    function updatePaletteActive() {
+        var swatches = paletteEl.querySelectorAll('.color-swatch');
+        for (var i = 0; i < swatches.length; i++) {
+            swatches[i].classList.toggle('active', swatches[i].dataset.color === state.color);
+        }
+    }
+
+    buildPalette();
+
+    // ── UI: Toggle buttons ──────────────────────────
+    function setupToggle(btnId, key) {
+        var btn = document.getElementById(btnId);
+        btn.addEventListener('click', function() {
+            state[key] = !state[key];
+            btn.classList.toggle('active', state[key]);
+            redraw();
+        });
+    }
+    setupToggle('mirrorBtn', 'mirror');
+    setupToggle('rainbowBtn', 'rainbow');
+    setupToggle('glowBtn', 'glow');
+    setupToggle('guidesBtn', 'guides');
+
+    // ── UI: Background ──────────────────────────────
+    var bgRow = document.getElementById('bgRow');
+
+    function buildBgRow() {
+        bgRow.innerHTML = '';
+        for (var i = 0; i < BG_PRESETS.length; i++) {
+            var opt = document.createElement('div');
+            opt.className = 'bg-option';
+            opt.style.background = BG_PRESETS[i].color;
+            if (BG_PRESETS[i].color === '#ffffff') {
+                opt.style.border = '2px solid #444';
+            }
+            opt.dataset.color = BG_PRESETS[i].color;
+            if (BG_PRESETS[i].color === state.bgColor) opt.classList.add('active');
+            opt.addEventListener('click', function() {
+                state.bgColor = this.dataset.color;
+                updateBgActive();
+                redraw();
+            });
+            bgRow.appendChild(opt);
+        }
+        // Custom bg picker
+        var custom = document.createElement('div');
+        custom.className = 'bg-option custom-bg';
+        var picker = document.createElement('input');
+        picker.type = 'color';
+        picker.value = state.customBg;
+        picker.addEventListener('input', function() {
+            state.customBg = this.value;
+            state.bgColor = this.value;
+            updateBgActive();
+            redraw();
+        });
+        custom.appendChild(picker);
+        bgRow.appendChild(custom);
+    }
+
+    function updateBgActive() {
+        var opts = bgRow.querySelectorAll('.bg-option');
+        for (var i = 0; i < opts.length; i++) {
+            opts[i].classList.toggle('active', opts[i].dataset.color === state.bgColor);
+        }
+    }
+
+    buildBgRow();
+
+    // ── Undo ────────────────────────────────────────
+    document.getElementById('undoBtn').addEventListener('click', function() {
+        if (strokes.length > 0) {
+            strokes.pop();
+            redraw();
+        }
+    });
+
+    // ── Clear ───────────────────────────────────────
+    document.getElementById('clearBtn').addEventListener('click', function() {
+        if (strokes.length === 0) return;
+        strokes = [];
+        redraw();
+    });
+
+    // ── Keyboard shortcuts ──────────────────────────
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            if (strokes.length > 0) {
+                strokes.pop();
+                redraw();
+            }
+        }
+    });
+
+    // ── Resize ──────────────────────────────────────
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ── Serialization (for platform integration) ────
+    window.serializeProjectData = function() {
+        return {
+            version: 1,
+            state: {
+                symmetry: state.symmetry,
+                mirror: state.mirror,
+                rainbow: state.rainbow,
+                glow: state.glow,
+                guides: state.guides,
+                lineWidth: state.lineWidth,
+                color: state.color,
+                bgColor: state.bgColor,
+                customBg: state.customBg
+            },
+            strokes: strokes.map(function(s) {
+                return {
+                    points: s.points,
+                    color: s.color,
+                    lineWidth: s.lineWidth,
+                    rainbow: s.rainbow,
+                    glow: s.glow,
+                    mirror: s.mirror
+                };
+            })
+        };
+    };
+
+    window.loadProjectData = function(data) {
+        if (!data || !data.version) return;
+
+        // Restore state
+        var s = data.state;
+        if (s) {
+            state.symmetry = s.symmetry || 8;
+            state.mirror = !!s.mirror;
+            state.rainbow = !!s.rainbow;
+            state.glow = !!s.glow;
+            state.guides = !!s.guides;
+            state.lineWidth = s.lineWidth || 3;
+            state.color = s.color || PRESET_COLORS[0];
+            state.bgColor = s.bgColor || BG_PRESETS[0].color;
+            state.customBg = s.customBg || '#333333';
+        }
+
+        // Restore strokes
+        if (data.strokes && Array.isArray(data.strokes)) {
+            strokes = data.strokes;
+        } else {
+            strokes = [];
+        }
+
+        // Update UI controls
+        symmetrySlider.value = state.symmetry;
+        symmetryValue.textContent = state.symmetry;
+        widthSlider.value = state.lineWidth;
+        widthValue.textContent = state.lineWidth;
+        updatePaletteActive();
+
+        // Update toggle buttons
+        document.getElementById('mirrorBtn').classList.toggle('active', state.mirror);
+        document.getElementById('rainbowBtn').classList.toggle('active', state.rainbow);
+        document.getElementById('glowBtn').classList.toggle('active', state.glow);
+        document.getElementById('guidesBtn').classList.toggle('active', state.guides);
+
+        // Rebuild bg row to reflect active state
+        buildBgRow();
+
+        redraw();
+    };
+
+})();
+</script>
+</body>
+</html>
