@@ -495,7 +495,7 @@ canvas {
     function drawSegmentOn(target, stroke, segIndex, size) {
         var cx = size / 2;
         var cy = size / 2;
-        var n = state.symmetry;
+        var n = stroke.symmetry || state.symmetry;
         var angleStep = (Math.PI * 2) / n;
         var copies = stroke.mirror ? n * 2 : n;
         var prev = stroke.points[segIndex];
@@ -585,7 +585,8 @@ canvas {
             lineWidth: state.lineWidth,
             rainbow: state.rainbow,
             glow: state.glow,
-            mirror: state.mirror
+            mirror: state.mirror,
+            symmetry: state.symmetry
         };
     }
 
@@ -618,10 +619,19 @@ canvas {
         isDrawing = false;
         if (currentStroke && currentStroke.points.length > 1) {
             strokes.push(currentStroke);
+            // Draw completed stroke directly onto buffer (no full rebuild)
+            if (!bufferDirty) {
+                drawStrokeOn(bufferCtx, currentStroke, canvasSize);
+            }
         }
         currentStroke = null;
-        bufferDirty = true;
-        fullRedraw();
+        // Clear live canvas and composite (only full rebuild if buffer was dirty)
+        liveCtx.clearRect(0, 0, canvasSize, canvasSize);
+        liveSegmentsDrawn = 0;
+        if (bufferDirty) {
+            rebuildBuffer();
+        }
+        composite();
     }
 
     // Mouse events
@@ -642,8 +652,6 @@ canvas {
     symmetrySlider.addEventListener('input', function() {
         state.symmetry = parseInt(this.value);
         symmetryValue.textContent = state.symmetry;
-        bufferDirty = true;
-        fullRedraw();
     });
 
     // ── UI: Width slider ────────────────────────────
@@ -811,7 +819,8 @@ canvas {
                     lineWidth: s.lineWidth,
                     rainbow: s.rainbow,
                     glow: s.glow,
-                    mirror: s.mirror
+                    mirror: s.mirror,
+                    symmetry: s.symmetry || state.symmetry
                 };
             })
         };
