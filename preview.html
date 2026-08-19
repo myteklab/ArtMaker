@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Art Maker Preview</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; background: #1a1a1f; }
+        #host {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            border: 0; display: block; opacity: 0; transition: opacity .3s;
+        }
+        #host.ready { opacity: 1; }
+
+        #am-loading {
+            position: absolute; inset: 0; z-index: 30; display: flex;
+            align-items: center; justify-content: center;
+            background: #1a1a1f; color: #8a8a99;
+            font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+        }
+        /* Bottom right: it covers least of a square canvas that is centred in
+           a wide frame, and the modal's close button owns the top right. */
+        #am-replay {
+            position: absolute; right: 12px; bottom: 12px;
+            z-index: 20; cursor: pointer; border: 0; border-radius: 999px;
+            padding: 8px 18px; background: rgba(10, 10, 14, .82); color: #fff;
+            border: 1px solid rgba(255, 255, 255, .18);
+            font: 600 13px system-ui, -apple-system, 'Segoe UI', sans-serif;
+        }
+        #am-replay:hover { background: rgba(30, 30, 40, .92); }
+        .am-gone { display: none !important; }
+    </style>
+</head>
+
+<body>
+    <!-- Read-only art preview for the share page and the gallery modal.
+         The saved screenshot already shows the finished piece (the adapter
+         captures #artCanvas), so a static render would add nothing. What the
+         screenshot cannot show is the piece being MADE, and Art Maker saves a
+         real stroke list rather than a flattened raster, so this replays the
+         drawing.
+
+         No renderer is duplicated to do it. The app's own loadProjectData
+         assigns the stroke array and calls fullRedraw, so feeding it a growing
+         SLICE of the strokes plays the drawing back through the app's real
+         brush code: symmetry, mirroring, rainbow and glow all included. -->
+    <iframe id="host" src="index.html" title="Art preview"></iframe>
+    <button id="am-replay" class="am-gone" type="button">&#8635; Replay</button>
+    <div id="am-loading">Loading artwork...</div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        var VIEW_ONLY_CSS = [
+            /* The toolbar is the whole editing surface; .canvas-area is flex:1
+               so the canvas takes the frame once it is gone. */
+            '.toolbar { display: none !important; }',
+            '#artCanvas { cursor: default !important; }'
+        ].join('\n');
+
+        var REPLAY_MS = 4200;      /* how long a full playback takes */
+        var WORK_BUDGET_MS = 2000; /* total redraw cost to spend on one playback */
+        var MIN_STEPS = 6, MAX_STEPS = 36;
+
+        var iframe = document.getElementById('host');
+        var pending = null;
+        var delivered = false;
+        var project = null;
+        var timers = [];
+
+        function el(id) { return document.getElementById(id); }
+
+        function appWindow() {
+            var w;
+            try { w = iframe.contentWindow; } catch (e) { return null; }
+            if (!w || typeof w.loadProjectData !== 'function') return null;
+            if (!w.document.querySelector('.canvas-area')) return null;
+            return w;
+        }
+
+        function slice(n) {
+            return {
+                version: project.version || 1,
+                state: project.state,
+                strokes: project.strokes.slice(0, n)
+            };
+        }
+
+        function clearTimers() {
+            timers.forEach(clearTimeout);
+            timers = [];
+        }
+
+        /* Redraw cost per step is the whole stroke list so far, so a fixed step
+           count would cost wildly different amounts on a 10-stroke doodle and a
+           76-stroke piece at symmetry 16. Time one real redraw and pick the
+           step count from it: total playback work is about redrawMs x
+           (steps + 1) / 2. */
+        function stepCountFor(redrawMs) {
+            var steps = Math.round((2 * WORK_BUDGET_MS) / Math.max(1, redrawMs)) - 1;
+            return Math.max(MIN_STEPS, Math.min(MAX_STEPS, steps));
+        }
+
+        function play(w, steps) {
+            clearTimers();
+            var total = project.strokes.length;
+            var gap = REPLAY_MS / steps;
+            for (var i = 1; i <= steps; i++) {
+                (function (k) {
+                    timers.push(setTimeout(function () {
+                        var n = Math.max(1, Math.round(total * k / steps));
+                        try { w.loadProjectData(slice(n)); } catch (e) {}
+                        if (k === steps) el('am-replay').classList.remove('am-gone');
+                    }, gap * k));
+                })(i);
+            }
+        }
+
+        function deliver(data) {
+            if (delivered) return;
+            var w = appWindow();
+            if (!w) { pending = data; return; }
+            delivered = true;
+            project = data;
+
+            try {
+                var style = w.document.createElement('style');
+                style.textContent = VIEW_ONLY_CSS;
+                w.document.head.appendChild(style);
+                w.dispatchEvent(new w.Event('resize'));
+            } catch (e) {}
+
+            var strokes = (project && project.strokes) || [];
+
+            /* One full load, timed, while the frame is still hidden: it sizes
+               the playback and doubles as the fallback if anything below fails. */
+            var t0 = (w.performance || performance).now();
+            try { w.loadProjectData(project); }
+            catch (e) { console.warn('[artmaker-preview] load failed', e); }
+            var redrawMs = (w.performance || performance).now() - t0;
+
+            el('am-loading').classList.add('am-gone');
+            iframe.classList.add('ready');
+            window.parent.postMessage({ type: 'PREVIEW_LOADED' }, '*');
+
+            /* Nothing to play back: leave the finished piece up. */
+            if (strokes.length < 2) return;
+
+            var steps = stepCountFor(redrawMs);
+            try { w.loadProjectData(slice(0)); } catch (e) {}
+            play(w, steps);
+
+            el('am-replay').addEventListener('click', function () {
+                el('am-replay').classList.add('am-gone');
+                try { w.loadProjectData(slice(0)); } catch (e) {}
+                play(w, steps);
+            });
+        }
+
+        function normalize(data) {
+            if (typeof data === 'string') {
+                try { return JSON.parse(data); } catch (e) { return null; }
+            }
+            return (data && typeof data === 'object') ? data : null;
+        }
+
+        window.addEventListener('message', function (e) {
+            var msg = e.data;
+            if (!msg || msg.type !== 'LOAD_PREVIEW') return;
+            var art = normalize(msg.data);
+            if (!art || !art.strokes) {
+                el('am-loading').classList.add('am-gone');
+                iframe.classList.add('ready');
+                window.parent.postMessage({ type: 'PREVIEW_LOADED' }, '*');
+                return;
+            }
+            deliver(art);
+        });
+
+        var tries = 0;
+        (function waitForApp() {
+            if (delivered) return;
+            if (pending && appWindow()) { deliver(pending); return; }
+            if (tries++ < 300) { setTimeout(waitForApp, 50); return; }
+            console.warn('[artmaker-preview] app never finished booting');
+            el('am-loading').classList.add('am-gone');
+            iframe.classList.add('ready');
+            window.parent.postMessage({ type: 'PREVIEW_LOADED' }, '*');
+        })();
+
+        window.parent.postMessage({ type: 'PREVIEW_READY' }, '*');
+    })();
+    </script>
+</body>
+
+</html>
