@@ -870,6 +870,23 @@ canvas {
         fullRedraw();
     };
 
+    // The read-only preview replays a piece by revealing strokes a few at a
+    // time. It used to do that through loadProjectData, which rebuilds the
+    // buffer from stroke zero, so every step redrew everything before it: a
+    // 32-stroke piece at symmetry 16 with glow costs 33k blurred stroke() calls
+    // per redraw, and seven of those back to back locked the tab for ten
+    // seconds. Appending onto the buffer already on screen makes a whole
+    // playback cost about one redraw however finely it is sliced.
+    window.appendStrokesForPreview = function(more) {
+        if (!Array.isArray(more) || !more.length) return;
+        if (bufferDirty) rebuildBuffer();
+        for (var i = 0; i < more.length; i++) {
+            strokes.push(more[i]);
+            drawStrokeOn(bufferCtx, more[i], canvasSize);
+        }
+        composite();
+    };
+
 })();
 </script>
 </body>

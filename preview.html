@@ -44,10 +44,10 @@
          real stroke list rather than a flattened raster, so this replays the
          drawing.
 
-         No renderer is duplicated to do it. The app's own loadProjectData
-         assigns the stroke array and calls fullRedraw, so feeding it a growing
-         SLICE of the strokes plays the drawing back through the app's real
-         brush code: symmetry, mirroring, rainbow and glow all included. -->
+         No renderer is duplicated to do it. The app's own brush code draws
+         every frame of the playback, so symmetry, mirroring, rainbow and glow
+         all come along: appendStrokesForPreview hands it the strokes revealed
+         since the last step and it draws them onto the buffer already there. -->
     <iframe id="host" src="index.html" title="Art preview"></iframe>
     <button id="am-replay" class="am-gone" type="button">&#8635; Replay</button>
     <div id="am-loading">Loading artwork...</div>
@@ -63,9 +63,17 @@
             '#artCanvas { cursor: default !important; }'
         ].join('\n');
 
-        var REPLAY_MS = 4200;      /* how long a full playback takes */
-        var WORK_BUDGET_MS = 2000; /* total redraw cost to spend on one playback */
+        var REPLAY_MS = 4200;    /* how long a full playback takes */
+        var STEP_BUDGET_MS = 90; /* target cost of a single playback step */
         var MIN_STEPS = 6, MAX_STEPS = 36;
+        /* A whole playback costs about one redraw now, spread over REPLAY_MS,
+           so what matters is the share of the main thread that leaves for the
+           page around it. Up to about a third reads as a drawing that animates;
+           past that the tab stops answering, and a piece that dear is better
+           left finished with the button offering the rest. Measured redraws on
+           real work run 20ms to 800ms; the pieces this turns away are the ones
+           several seconds deep, where the old code queued seven of them. */
+        var AUTOPLAY_MAX_LOAD = 0.35;
 
         var iframe = document.getElementById('host');
         var pending = null;
@@ -96,26 +104,52 @@
             timers = [];
         }
 
-        /* Redraw cost per step is the whole stroke list so far, so a fixed step
-           count would cost wildly different amounts on a 10-stroke doodle and a
-           76-stroke piece at symmetry 16. Time one real redraw and pick the
-           step count from it: total playback work is about redrawMs x
-           (steps + 1) / 2. */
+        /* Steps no longer multiply the work: each stroke is drawn once across
+           the whole playback, so what the step count buys is a gap for the
+           browser to paint in. Pick enough of them to keep one step near
+           STEP_BUDGET_MS.
+
+           The formula this replaces divided a fixed work budget by the redraw
+           cost and then clamped up to MIN_STEPS, so the budget stopped binding
+           at exactly the point it mattered: a 3.5s redraw asked for zero steps
+           and got six, and heavier art was handed more absolute work rather
+           than less. */
         function stepCountFor(redrawMs) {
-            var steps = Math.round((2 * WORK_BUDGET_MS) / Math.max(1, redrawMs)) - 1;
+            var steps = Math.ceil(redrawMs / STEP_BUDGET_MS);
             return Math.max(MIN_STEPS, Math.min(MAX_STEPS, steps));
+        }
+
+        function showReplayButton(hasPlayed) {
+            var b = el('am-replay');
+            b.textContent = hasPlayed ? '\u21BB Replay' : '\u25B6 Watch it drawn';
+            b.classList.remove('am-gone');
+        }
+
+        /* Reveal strokes up to `to` by drawing only the ones since `from`.
+           The fallback is the old quadratic path, reached only if this file
+           ships against an index.html without the append hook. */
+        function appendThrough(w, from, to) {
+            try {
+                if (typeof w.appendStrokesForPreview === 'function') {
+                    w.appendStrokesForPreview(project.strokes.slice(from, to));
+                } else {
+                    w.loadProjectData(slice(to));
+                }
+            } catch (e) {}
         }
 
         function play(w, steps) {
             clearTimers();
             var total = project.strokes.length;
             var gap = REPLAY_MS / steps;
+            var shown = 0;
             for (var i = 1; i <= steps; i++) {
                 (function (k) {
                     timers.push(setTimeout(function () {
                         var n = Math.max(1, Math.round(total * k / steps));
-                        try { w.loadProjectData(slice(n)); } catch (e) {}
-                        if (k === steps) el('am-replay').classList.remove('am-gone');
+                        appendThrough(w, shown, n);
+                        shown = n;
+                        if (k === steps) showReplayButton(true);
                     }, gap * k));
                 })(i);
             }
@@ -152,14 +186,23 @@
             if (strokes.length < 2) return;
 
             var steps = stepCountFor(redrawMs);
-            try { w.loadProjectData(slice(0)); } catch (e) {}
-            play(w, steps);
 
             el('am-replay').addEventListener('click', function () {
                 el('am-replay').classList.add('am-gone');
                 try { w.loadProjectData(slice(0)); } catch (e) {}
                 play(w, steps);
             });
+
+            /* Heavy piece: it stays on screen finished rather than being wiped
+               and rebuilt. Someone opened a share link, not a request for their
+               tab to stop responding, so the drawing becomes their call. */
+            if (redrawMs > REPLAY_MS * AUTOPLAY_MAX_LOAD) {
+                showReplayButton(false);
+                return;
+            }
+
+            try { w.loadProjectData(slice(0)); } catch (e) {}
+            play(w, steps);
         }
 
         function normalize(data) {
