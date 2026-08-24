@@ -32,23 +32,33 @@
             font: 600 13px system-ui, -apple-system, 'Segoe UI', sans-serif;
         }
         #am-replay:hover { background: rgba(30, 30, 40, .92); }
+        #am-shot {
+            position: absolute; inset: 0; z-index: 10;
+            width: 100%; height: 100%; object-fit: contain;
+        }
         .am-gone { display: none !important; }
     </style>
 </head>
 
 <body>
     <!-- Read-only art preview for the share page and the gallery modal.
-         The saved screenshot already shows the finished piece (the adapter
-         captures #artCanvas), so a static render would add nothing. What the
-         screenshot cannot show is the piece being MADE, and Art Maker saves a
-         real stroke list rather than a flattened raster, so this replays the
-         drawing.
+         What a viewer wants on arrival is the finished piece, and the saved
+         screenshot already IS that (the adapter captures #artCanvas), so it
+         goes up as an image and no canvas work happens at all. Drawing the
+         piece for real is not cheap: cost runs with segments x symmetry copies
+         x blur radius x canvas AREA, so the same art that renders in 200ms in
+         a gallery tile takes seconds in a full-width frame on a Retina display.
+         That is a bill to hand someone who asked for it, not someone who
+         clicked a link.
 
-         No renderer is duplicated to do it. The app's own brush code draws
-         every frame of the playback, so symmetry, mirroring, rainbow and glow
-         all come along: appendStrokesForPreview hands it the strokes revealed
+         What the screenshot cannot show is the piece being MADE, and Art Maker
+         saves a real stroke list rather than a flattened raster. The button
+         offers that, and no renderer is duplicated to do it: the app's own
+         brush code draws every frame, so symmetry, mirroring, rainbow and glow
+         all come along. appendStrokesForPreview hands it the strokes revealed
          since the last step and it draws them onto the buffer already there. -->
     <iframe id="host" src="index.html" title="Art preview"></iframe>
+    <img id="am-shot" class="am-gone" alt="" >
     <button id="am-replay" class="am-gone" type="button">&#8635; Replay</button>
     <div id="am-loading">Loading artwork...</div>
 
@@ -63,19 +73,12 @@
             '#artCanvas { cursor: default !important; }'
         ].join('\n');
 
-        var REPLAY_MS = 4200;    /* how long a full playback takes */
-        var STEP_BUDGET_MS = 90; /* target cost of a single playback step */
-        var MIN_STEPS = 6, MAX_STEPS = 36;
-        /* A whole playback costs about one redraw now, spread over REPLAY_MS,
-           so what matters is the share of the main thread that leaves for the
-           page around it. Up to about a third reads as a drawing that animates;
-           past that the tab stops answering, and a piece that dear is better
-           left finished with the button offering the rest. Measured redraws on
-           real work run 20ms to 800ms; the pieces this turns away are the ones
-           several seconds deep, where the old code queued seven of them. */
-        var AUTOPLAY_MAX_LOAD = 0.35;
+        var REPLAY_MS = 4200;    /* how long a full playback wants to take */
+        var STEP_BUDGET_MS = 90; /* most work to do between two paints */
+        var MIN_GAP_MS = 16;
 
         var iframe = document.getElementById('host');
+        var shotUrl = '';
         var pending = null;
         var delivered = false;
         var project = null;
@@ -104,21 +107,6 @@
             timers = [];
         }
 
-        /* Steps no longer multiply the work: each stroke is drawn once across
-           the whole playback, so what the step count buys is a gap for the
-           browser to paint in. Pick enough of them to keep one step near
-           STEP_BUDGET_MS.
-
-           The formula this replaces divided a fixed work budget by the redraw
-           cost and then clamped up to MIN_STEPS, so the budget stopped binding
-           at exactly the point it mattered: a 3.5s redraw asked for zero steps
-           and got six, and heavier art was handed more absolute work rather
-           than less. */
-        function stepCountFor(redrawMs) {
-            var steps = Math.ceil(redrawMs / STEP_BUDGET_MS);
-            return Math.max(MIN_STEPS, Math.min(MAX_STEPS, steps));
-        }
-
         function showReplayButton(hasPlayed) {
             var b = el('am-replay');
             b.textContent = hasPlayed ? '\u21BB Replay' : '\u25B6 Watch it drawn';
@@ -138,21 +126,62 @@
             } catch (e) {}
         }
 
-        function play(w, steps) {
+        /* Every earlier version of this picked a step count up front from one
+           timed redraw, which meant guessing what the rest of the piece would
+           cost on a machine and a frame size it had seen exactly one sample of.
+           This measures instead: draw a batch, see what it cost, size the next
+           batch from that. A step never runs longer than STEP_BUDGET_MS by more
+           than the last one's error, and the gap to the next is never shorter
+           than the work just done, so there is always room to paint. Dense art
+           on a big display simply takes longer to replay rather than taking the
+           tab down with it. */
+        function play(w) {
             clearTimers();
             var total = project.strokes.length;
-            var gap = REPLAY_MS / steps;
+            var clock = w.performance || performance;
             var shown = 0;
-            for (var i = 1; i <= steps; i++) {
-                (function (k) {
-                    timers.push(setTimeout(function () {
-                        var n = Math.max(1, Math.round(total * k / steps));
-                        appendThrough(w, shown, n);
-                        shown = n;
-                        if (k === steps) showReplayButton(true);
-                    }, gap * k));
-                })(i);
+            var msPerUnit = 0;
+
+            /* Strokes are wildly uneven: one flick of the wrist and one long
+               sweep both count as 1, and at symmetry 16 with mirroring each
+               segment is drawn 32 times. Batching by stroke count therefore
+               overshoots badly on the first long stroke. A segment times its
+               copies is the thing that actually costs. */
+            function unitsIn(stroke) {
+                var sym = stroke.symmetry
+                    || (project.state && project.state.symmetry) || 8;
+                var copies = sym * (stroke.mirror ? 2 : 1);
+                var segs = Math.max(1, (stroke.points || []).length - 1);
+                return segs * copies;
             }
+
+            function step() {
+                var budget = msPerUnit > 0 ? STEP_BUDGET_MS / msPerUnit : 0;
+                var to = shown, taken = 0;
+                do {
+                    taken += unitsIn(project.strokes[to]);
+                    to++;
+                } while (to < total && taken + unitsIn(project.strokes[to]) <= budget);
+
+                var t0 = clock.now();
+                appendThrough(w, shown, to);
+                var spent = clock.now() - t0;
+                msPerUnit = spent / Math.max(1, taken);
+                shown = to;
+
+                if (shown >= total) { showReplayButton(true); return; }
+
+                /* Aim for REPLAY_MS overall, but never queue the next batch
+                   before the browser has had at least as long as the last one
+                   took to get a frame out. */
+                var left = 0;
+                for (var i = shown; i < total; i++) left += unitsIn(project.strokes[i]);
+                var stepsLeft = Math.max(1, Math.ceil((left * msPerUnit) / STEP_BUDGET_MS));
+                var even = REPLAY_MS / (stepsLeft + 1);
+                timers.push(setTimeout(step, Math.max(MIN_GAP_MS, spent, even)));
+            }
+
+            timers.push(setTimeout(step, 0));
         }
 
         function deliver(data) {
@@ -171,38 +200,41 @@
 
             var strokes = (project && project.strokes) || [];
 
-            /* One full load, timed, while the frame is still hidden: it sizes
-               the playback and doubles as the fallback if anything below fails. */
-            var t0 = (w.performance || performance).now();
-            try { w.loadProjectData(project); }
-            catch (e) { console.warn('[artmaker-preview] load failed', e); }
-            var redrawMs = (w.performance || performance).now() - t0;
-
-            el('am-loading').classList.add('am-gone');
-            iframe.classList.add('ready');
-            window.parent.postMessage({ type: 'PREVIEW_LOADED' }, '*');
-
-            /* Nothing to play back: leave the finished piece up. */
-            if (strokes.length < 2) return;
-
-            var steps = stepCountFor(redrawMs);
-
             el('am-replay').addEventListener('click', function () {
                 el('am-replay').classList.add('am-gone');
+                el('am-shot').classList.add('am-gone');
                 try { w.loadProjectData(slice(0)); } catch (e) {}
-                play(w, steps);
+                play(w);
             });
 
-            /* Heavy piece: it stays on screen finished rather than being wiped
-               and rebuilt. Someone opened a share link, not a request for their
-               tab to stop responding, so the drawing becomes their call. */
-            if (redrawMs > REPLAY_MS * AUTOPLAY_MAX_LOAD) {
+            function reveal() {
+                el('am-loading').classList.add('am-gone');
+                iframe.classList.add('ready');
+                window.parent.postMessage({ type: 'PREVIEW_LOADED' }, '*');
+            }
+
+            /* The screenshot is the finished piece, so showing it costs a
+               decode instead of tens of thousands of blurred stroke() calls.
+               The canvas stays empty until someone asks for the drawing. */
+            if (shotUrl && strokes.length >= 2) {
+                var shot = el('am-shot');
+                shot.onload = function () { shot.classList.remove('am-gone'); reveal(); };
+                shot.onerror = function () { renderStill(); };
+                shot.src = shotUrl;
                 showReplayButton(false);
                 return;
             }
 
-            try { w.loadProjectData(slice(0)); } catch (e) {}
-            play(w, steps);
+            renderStill();
+
+            /* No screenshot to lean on, so the canvas has to draw it. This is
+               the one full render, and it is what any still of this art costs. */
+            function renderStill() {
+                try { w.loadProjectData(project); }
+                catch (e) { console.warn('[artmaker-preview] load failed', e); }
+                reveal();
+                if (strokes.length >= 2) showReplayButton(false);
+            }
         }
 
         function normalize(data) {
@@ -215,6 +247,12 @@
         window.addEventListener('message', function (e) {
             var msg = e.data;
             if (!msg || msg.type !== 'LOAD_PREVIEW') return;
+            /* Same-origin storage paths only. The parent is trusted, but this
+               value ends up in an img src and a relative path cannot be turned
+               into a request somewhere else. */
+            if (typeof msg.previewUrl === 'string' && /^\/storage\/[\w./-]+$/.test(msg.previewUrl)) {
+                shotUrl = msg.previewUrl;
+            }
             var art = normalize(msg.data);
             if (!art || !art.strokes) {
                 el('am-loading').classList.add('am-gone');
